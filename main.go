@@ -1,3 +1,26 @@
+/*------------------------------------------------------------------------------
+-- DATE:	       February, 2016
+--
+-- Source File:	 child_proc.go
+--
+-- REVISIONS: 	(Date and Description)
+--
+-- DESIGNER:	   Marc Vouve
+--
+-- PROGRAMMER:	 Marc Vouve
+--
+--
+-- INTERFACE:
+--	func newConnection(srvInfo serverInfo)
+--  func worker(srvInfo serverInfo)
+--  func connectionInstance(conn net.Conn) connectionInfo
+--  func handleData(conn net.Conn, connInfo *connectionInfo) error
+--  func observerLoop(srvInfo serverInfo, osSignals chan os.Signal)
+--  func newServerInfo() serverInfo
+--
+-- NOTES: This file is for functions that are part of child go routines which
+--        handle data for the EPoll version of the scalable server.
+------------------------------------------------------------------------------*/
 package main
 
 import (
@@ -13,11 +36,10 @@ import (
 )
 
 type connectionInfo struct {
-	timeStamp          time.Time // the time the connection ended
-	hostName           string    // the remote host name
-	ammountOfData      int       // the ammount of data transfered to/from the host
-	numberOfRequests   int       // the total requests sent to the server from this client
-	connectionsAtClose int       // the total number of connections being sustained when the connection was closed.
+	HostName           string // the remote host name
+	AmmountOfData      int    // the ammount of data transfered to/from the host
+	NumberOfRequests   int    // the total requests sent to the server from this client
+	ConnectionsAtClose int    // the total number of connections being sustained when the connection was closed.
 }
 
 type serverInfo struct {
@@ -30,67 +52,111 @@ type serverInfo struct {
 
 const newConnectionConst = 1
 const finishedConnectionConst = -1
+const startingClients = 15
+const freeServerMinimum = 10
 
-/* Author Marc Vouve
- *
- * Designer Marc Vouve
- *
- * Date: February 6 2016
- *
- * Notes: This is a helper function for when a new connection is detected by the
- *        observer loop
- *
- */
+func main() {
+	if len(os.Args) < 2 { // validate args
+		log.Fatalln("Missing args:", os.Args[0], " [PORT]")
+	}
+
+	srvInfo := newServerInfo()
+
+	// create servers
+	for i := 0; i < startingClients; i++ {
+		*srvInfo.availableServers++
+		go worker(srvInfo)
+	}
+
+	// when the server is killed it should print statistics need to catch the signal
+	osSignals := make(chan os.Signal, 1)
+	signal.Notify(osSignals, os.Interrupt, os.Kill)
+
+	observerLoop(srvInfo, osSignals)
+}
+
+/*-----------------------------------------------------------------------------
+-- FUNCTION:    newConnection
+--
+-- DATE:        February 6, 2016
+--
+-- REVISIONS:
+--
+-- DESIGNER:		Marc Vouve
+--
+-- PROGRAMMER:	Marc Vouve
+--
+-- INTERFACE:   newConnection(srvInfo serverInfo)
+--	 srvInfo:		information about the overall server
+--
+-- RETURNS:     void
+--
+-- NOTES:			Called when a new client connects to the server.
+------------------------------------------------------------------------------*/
 func newConnection(srvInfo serverInfo) {
 	*srvInfo.totalConnections++
-	if *srvInfo.availableServers < 2 {
-		go serverInstance(srvInfo)
+	if *srvInfo.availableServers < freeServerMinimum {
+		go worker(srvInfo)
 	} else {
 		*srvInfo.availableServers--
 	}
 }
 
-/* Author: Marc Vouve
- *
- * Designer: Marc Vouve
- *
- * Date: February 6 2016
- *
- * Notes: This function is an "instance" of a server which allows connections in
- *        and echos strings back. After a connection has been closed it will wait
- *        for annother connection
- */
-func serverInstance(srvInfo serverInfo) {
+/*-----------------------------------------------------------------------------
+-- FUNCTION:    worker
+--
+-- DATE:        February 6, 2016
+--
+-- REVISIONS:
+--
+-- DESIGNER:		Marc Vouve
+--
+-- PROGRAMMER:	Marc Vouve
+--
+-- INTERFACE:   serverInstance(srvInfo serverInfo)
+--	 srvInfo:		information about the overall server
+--
+-- RETURNS:     void
+--
+-- NOTES:			This function is a worker thread, it accepts connections from
+--						outside and handles data from them.
+------------------------------------------------------------------------------*/
+func worker(srvInfo serverInfo) {
 
 	for {
 		conn, err := srvInfo.listener.Accept()
-		defer conn.Close()
 		if err != nil {
-			log.Print(err)
+			log.Println(err)
 			continue
 		}
+
 		srvInfo.serverConnection <- newConnectionConst
 		srvInfo.connectInfo <- connectionInstance(conn)
+		conn.Close()
 	}
 
 }
 
-/* Author: Marc Vouve
- *
- * Designer: Marc Vouve
- *
- * Date: February 6 2016
- *
- * Returns: connectionInfo information about the connection once the client has
- *          terminated the client.
- *
- * Notes: This function handles actual connections made to the server and tracks
- *        data about the ammount of data and the number of times data is set to
- *        the server.
- */
+/*-----------------------------------------------------------------------------
+-- FUNCTION:    connectionInstance
+--
+-- DATE:        February 6, 2016
+--
+-- REVISIONS:
+--
+-- DESIGNER:		Marc Vouve
+--
+-- PROGRAMMER:	Marc Vouve
+--
+-- INTERFACE:   func connectionInstance(conn net.Conn) connectionInfo
+--      conn:		a connection to a client.
+--
+-- RETURNS:   connectionInfo information about the connection when it's complete
+--
+-- NOTES:			This is the main data handling function
+------------------------------------------------------------------------------*/
 func connectionInstance(conn net.Conn) connectionInfo {
-	connInfo := connectionInfo{hostName: conn.RemoteAddr().String()}
-
+	connInfo := connectionInfo{HostName: conn.RemoteAddr().String()}
 	for {
 		err := handleData(conn, &connInfo)
 		if err == nil {
@@ -101,35 +167,60 @@ func connectionInstance(conn net.Conn) connectionInfo {
 		log.Println(err)
 		break
 	}
-	connInfo.timeStamp = time.Now()
 
 	return connInfo
 }
 
+/*-----------------------------------------------------------------------------
+-- FUNCTION:    connectionInstance
+--
+-- DATE:        February 6, 2016
+--
+-- REVISIONS:
+--
+-- DESIGNER:		Marc Vouve
+--
+-- PROGRAMMER:	Marc Vouve
+--
+-- INTERFACE:   func connectionInstance(conn net.Conn) connectionInfo
+--      conn:		a connection to a client.
+--
+-- RETURNS:   connectionInfo information about the connection when it's complete
+--
+-- NOTES:			This is the main data handling function
+------------------------------------------------------------------------------*/
 func handleData(conn net.Conn, connInfo *connectionInfo) error {
 	reader := bufio.NewReader(conn)
 	data, err := reader.ReadBytes('\n')
 	if err != nil {
 		return err
 	}
-	connInfo.ammountOfData += len(data)
-	connInfo.numberOfRequests++
+	connInfo.AmmountOfData += len(data)
+	connInfo.NumberOfRequests++
 	conn.Write(data)
 
 	return nil
 }
 
-/* Author: Marc Vouve
- *
- * Designer: Marc Vouve
- *
- * Date: February 7 2016
- *
- * Returns: connectionInfo information about the connection once the client has
- *          terminated the client.
- *
- * Notes: This was factored out of the main function.
- */
+/*-----------------------------------------------------------------------------
+-- FUNCTION:    observerLoop
+--
+-- DATE:        February 6, 2016
+--
+-- REVISIONS:
+--
+-- DESIGNER:		Marc Vouve
+--
+-- PROGRAMMER:	Marc Vouve
+--
+-- INTERFACE:   func observerLoop(srvInfo serverInfo, osSignals chan os.Signal)
+--   srvInfo:		Information about the server.
+-- osSignals:		reads signals from the OS and stops the program.
+--
+-- RETURNS:   connectionInfo information about the connection when it's complete
+--
+-- NOTES:			This is the main data handling function
+------------------------------------------------------------------------------*/
 func observerLoop(srvInfo serverInfo, osSignals chan os.Signal) {
 	currentConnections := 0
 	connectionsMade := list.New()
@@ -140,7 +231,7 @@ func observerLoop(srvInfo serverInfo, osSignals chan os.Signal) {
 			currentConnections++
 			newConnection(srvInfo)
 		case serverHost := <-srvInfo.connectInfo:
-			serverHost.connectionsAtClose = currentConnections
+			serverHost.ConnectionsAtClose = currentConnections
 			connectionsMade.PushBack(serverHost)
 			currentConnections--
 		case <-osSignals:
@@ -151,32 +242,30 @@ func observerLoop(srvInfo serverInfo, osSignals chan os.Signal) {
 	}
 }
 
+/*-----------------------------------------------------------------------------
+-- FUNCTION:    newServerInfo
+--
+-- DATE:        February 6, 2016
+--
+-- REVISIONS:
+--
+-- DESIGNER:		Marc Vouve
+--
+-- PROGRAMMER:	Marc Vouve
+--
+-- INTERFACE:   func newServerInfo() serverInfo
+--
+-- RETURNS:   serverInfo information about the server
+--
+-- NOTES:			This function builds the basic info about the server.
+------------------------------------------------------------------------------*/
 func newServerInfo() serverInfo {
+	var err error
 	srvInfo := serverInfo{totalConnections: new(int), availableServers: new(int),
 		serverConnection: make(chan int, 10), connectInfo: make(chan connectionInfo)}
-	srvInfo.listener, _ = net.Listen("tcp", os.Args[1])
+	if srvInfo.listener, err = net.Listen("tcp", os.Args[1]); err != nil {
+		log.Fatalln(err)
+	}
 
 	return srvInfo
-}
-
-func main() {
-	if len(os.Args) < 2 { // validate args
-		fmt.Println("Missing args:", os.Args[0], " [PORT]")
-
-		os.Exit(0)
-	}
-
-	srvInfo := newServerInfo()
-
-	// create servers
-	for i := 0; i < 10; i++ {
-		*srvInfo.availableServers++
-		go serverInstance(srvInfo)
-	}
-
-	// when the server is killed it should print statistics need to catch the signal
-	osSignals := make(chan os.Signal, 1)
-	signal.Notify(osSignals, os.Interrupt, os.Kill)
-
-	observerLoop(srvInfo, osSignals)
 }
