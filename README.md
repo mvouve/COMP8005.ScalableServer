@@ -3,7 +3,7 @@ This project was written in Go and is intended to aid in comparing the preforman
 * [epoll](https://github.com/mvouve/COMP8005.EPollScalableServer)
 * [select](https://github.com/mvouve/COMP8005.SelectScalableServer)
 
-I have also written a [client](https://github.com/mvouve/COMP8005.ScalableServerClient) that works with all three servers. 
+I have also written a [client](https://github.com/mvouve/COMP8005.ScalableServerClient) that works with all three servers. Full design documents, and a report based off findings from this experiment can be found there as well.
 
 ##Usage
 This server can be envoked using the syntax of:
