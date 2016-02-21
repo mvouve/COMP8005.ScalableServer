@@ -14,4 +14,4 @@ This server can be envoked using the syntax of:
 When terminated, the process will exit and generate an XLSX report listing clients that had connected, the ammount of data that they transfered and the number of times they transfered data to the server as well as other useful information about the connections.
 
 ##Testing
-This program has been tested to work on Fedora 22 and Manjaro 15 using a standered go compiler. It has been able to sustain over 40k concurrent connections.
+This program has been tested to work on Fedora 22 and Manjaro 15 using a standered Go 1.5 compiler. It has been able to sustain over 40k concurrent connections.
